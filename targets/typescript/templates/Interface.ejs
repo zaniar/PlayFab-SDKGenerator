@@ -1,0 +1,8 @@
+<%- generateApiSummary("    ", datatype, "summary")
+%>    export interface <%- datatype.name %><%- getBaseTypeSyntax(datatype) %> {
+<% if (datatype.properties) { for (var i = 0; i < datatype.properties.length; i++) { var property = datatype.properties[i]
+%><%- generateApiSummary("        ", property, "description")
+%>        <%- property.name %><%- getPropertyTsType(property, datatype) %>;
+<% } } %>
+    }
+

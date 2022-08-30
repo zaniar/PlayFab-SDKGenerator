@@ -1,0 +1,28 @@
+import { Settings, InternalSettings } from '.';
+import { PlayFabModule } from './Models';
+import { PlayFab<%- api.name %>Models } from './Models/<%- api.name %>Models';
+
+<% if (hasClientOptions) { %>
+    export function IsClientLoggedIn (): boolean {
+        return InternalSettings.sessionTicket != null && InternalSettings.sessionTicket?.length > 0;
+    }
+<% } %>    export function ForgetAllCredentials (): void {
+        InternalSettings.sessionTicket = null;
+        InternalSettings.entityToken = null;
+    }
+<% for(var i in api.calls) { var apiCall = api.calls[i];%>
+<%- getDeprecationAttribute("    ", apiCall)
+%>    export function <%- apiCall.name %> (request: PlayFab<%- api.name %>Models.<%- apiCall.request %>, callback?: PlayFabModule.ApiCallback<PlayFab<%- api.name %>Models.<%- apiCall.result %>>, customData?: any, extraHeaders?: {[key: string]: string}): Promise<PlayFabModule.SuccessContainer<PlayFab<%- api.name %>Models.<%- apiCall.result %>>> {
+<%- getRequestActions("        ", apiCall)
+%><% if (hasResultActions(apiCall)) { %>        var overloadCallback: PlayFabModule.ApiCallback<PlayFab<%- api.name %>Models.<%- apiCall.result %>> = function (result, error) {
+<%- getResultActions("            ", apiCall) %>
+            if (callback != null && typeof (callback) === "function")
+                callback(result, error);
+        };
+        <% if (apiCall.result !== "LoginResult") { %>return <% } %>InternalSettings.ExecuteRequestWrapper(<%- getUrlPath(apiCall) %>, request, <%- getAuthParams(apiCall) %>, overloadCallback, customData, extraHeaders);<% if (apiCall.result === "LoginResult") { %>
+        // Return a Promise so that multiple asynchronous calls to this method can be handled simultaneously with Promise.all()
+        return new Promise((resolve) => resolve(authenticationContext));<% } %><%
+}else{
+%>        return InternalSettings.ExecuteRequestWrapper(<%- getUrlPath(apiCall) %>, request, <%- getAuthParams(apiCall) %>, callback, customData, extraHeaders);<% } %>
+    }
+<% } %>

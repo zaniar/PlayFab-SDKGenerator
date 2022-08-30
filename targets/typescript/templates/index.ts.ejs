@@ -1,0 +1,248 @@
+import { PlayFabModule } from './Models';
+import { PlayFabClientModels } from './Models/ClientModels';
+
+export const Settings: PlayFabModule.ISettings = {
+    titleId: "", // You must set this value for PlayFabSdk to work properly (Found in the Game Manager for your title, at the PlayFab Website)
+    developerSecretKey: "", // For security reasons you must never expose this value to the client or players - You must set this value for Server-APIs to work properly (Found in the Game Manager for your title, at the PlayFab Website)
+    GlobalHeaderInjection: undefined,
+    productionServerUrl: ".playfabapi.com"
+}
+
+export interface IAuthenticationContext {
+    PlayFabId: string | null,
+    EntityId: string | null,
+    EntityType: string | null,
+    SessionTicket: string | null,
+    EntityToken: string | null
+}
+
+export const InternalSettings = {
+    entityToken: null as (string | null),
+    sdkVersion: "<%- sdkVersion %>",
+    requestGetParams: {
+        sdk: "JavaScriptSDK-<%- sdkVersion %>"
+    } as Record<string, string>,
+    sessionTicket: null as (string | null),
+    verticalName: <%- getVerticalNameDefault() %>, // The name of a customer vertical. This is only for customers running a private cluster. Generally you shouldn't touch this
+    errorTitleId: "Must be have Settings.titleId set to call this method",
+    errorLoggedIn: "Must be logged in to call this method",
+    errorEntityToken: "You must successfully call GetEntityToken before calling this",
+    errorSecretKey: "Must have Settings.developerSecretKey set to call this method",
+
+    GetServerUrl: function () {
+        if (!(Settings.productionServerUrl.substring(0, 4) === "http")) {
+            if (InternalSettings.verticalName) {
+                return "https://" + InternalSettings.verticalName + Settings.productionServerUrl;
+            } else {
+                return "https://" + Settings.titleId + Settings.productionServerUrl;
+            }
+        } else {
+            return Settings.productionServerUrl;
+        }
+    },
+
+    InjectHeaders: function (xhr: XMLHttpRequest, headersObj?: Record<string, string>) {
+        if (!headersObj)
+            return;
+
+        for (let headerKey in headersObj) {
+            try {
+                xhr.setRequestHeader(headerKey, headersObj[headerKey]);
+            } catch (e) {
+                console.log("Failed to append header: " + headerKey + " = " + headersObj[headerKey] + "Error: " + e);
+            }
+        }
+    },
+
+    ExecuteRequest: function<T extends PlayFabModule.IPlayFabResultCommon> (url: string, request: PlayFabModule.IPlayFabRequestCommon, authkey: string | null, authValue: string | null, callback?: PlayFabModule.ApiCallback<T> | null, customData?: any, extraHeaders?: {[key: string]: string}): Promise<PlayFabModule.SuccessContainer<T>> {
+        let resultPromise = new Promise<PlayFabModule.SuccessContainer<T>>(function (resolve, reject) {
+            if (callback != null && typeof (callback) !== "function")
+                throw "Callback must be null or a function";
+
+            if (request == null)
+                request = {};
+
+            let startTime = Number(new Date());
+            let requestBody = JSON.stringify(request);
+
+            let urlArr = [url];
+            let getParams = InternalSettings.requestGetParams;
+            if (getParams != null) {
+                let firstParam = true;
+                for (let key in getParams) {
+                    if (firstParam) {
+                        urlArr.push("?");
+                        firstParam = false;
+                    } else {
+                        urlArr.push("&");
+                    }
+                    urlArr.push(key);
+                    urlArr.push("=");
+                    urlArr.push(getParams[key]);
+                }
+            }
+
+            let completeUrl = urlArr.join("");
+
+            let xhr = new XMLHttpRequest();
+            // window.console.log("URL: " + completeUrl);
+            xhr.open("POST", completeUrl, true);
+
+            xhr.setRequestHeader("Content-Type", "application/json");
+            xhr.setRequestHeader("X-PlayFabSDK", "JavaScriptSDK-" + InternalSettings.sdkVersion);
+            if (authkey != null && authValue != null)
+                xhr.setRequestHeader(authkey, authValue);
+            InternalSettings.InjectHeaders(xhr, Settings.GlobalHeaderInjection);
+            InternalSettings.InjectHeaders(xhr, extraHeaders);
+
+            xhr.onloadend = function () {
+                if (callback == null)
+                    return;
+
+                let result = InternalSettings.GetPlayFabResponse(request, xhr, startTime, customData);
+                if (result.code === 200) {
+                    callback(result, null);
+                } else {
+                    callback(null, result);
+                }
+            }
+
+            xhr.onerror = function () {
+                if (callback == null)
+                    return;
+
+                let result = InternalSettings.GetPlayFabResponse(request, xhr, startTime, customData);
+                callback(null, result);
+            }
+
+            xhr.send(requestBody);
+            xhr.onreadystatechange = function () {
+                if (this.readyState === 4) {
+                    let xhrResult = InternalSettings.GetPlayFabResponse(request, this, startTime, customData);
+                    if (this.status === 200) {
+                        resolve(xhrResult);
+                    } else {
+                        reject(xhrResult);
+                    }
+                }
+            };
+        });
+        // Return a Promise so that calls to various API methods can be handled asynchronously
+        return resultPromise;
+    },
+
+    GetPlayFabResponse: function (request: PlayFabModule.IPlayFabRequestCommon, xhr: XMLHttpRequest, startTime: number, customData?: any) {
+        let result: any = null;
+        try {
+            // window.console.log("parsing json result: " + xhr.responseText);
+            result = JSON.parse(xhr.responseText);
+        } catch (e) {
+            result = {
+                code: 503, // Service Unavailable
+                status: "Service Unavailable",
+                error: "Connection error",
+                errorCode: 2, // PlayFabErrorCode.ConnectionError
+                errorMessage: xhr.responseText
+            };
+        }
+
+        result.CallBackTimeMS = Number(new Date()) - startTime;
+        result.Request = request;
+        result.CustomData = customData;
+        return result;
+    },
+
+    authenticationContext: {
+        PlayFabId: null,
+        EntityId: null,
+        EntityType: null,
+        SessionTicket: null,
+        EntityToken: null
+    } as IAuthenticationContext,
+
+    UpdateAuthenticationContext: function (authenticationContext: IAuthenticationContext, result: PlayFabModule.SuccessContainer<PlayFabClientModels.LoginResult>) {
+        let authenticationContextUpdates: IAuthenticationContext = {
+            PlayFabId: null,
+            EntityId: null,
+            EntityType: null,
+            SessionTicket: null,
+            EntityToken: null
+        };
+        if (result.data.PlayFabId !== null) {
+            InternalSettings.authenticationContext.PlayFabId = result.data.PlayFabId ?? null;
+            authenticationContextUpdates.PlayFabId = result.data.PlayFabId ?? null;
+        }
+        if (result.data.SessionTicket !== null) {
+            InternalSettings.authenticationContext.SessionTicket = result.data.SessionTicket ?? null;
+            authenticationContextUpdates.SessionTicket = result.data.SessionTicket ?? null;
+        }
+        if (result.data.EntityToken !== null) {
+            InternalSettings.authenticationContext.EntityId = result.data.EntityToken?.Entity?.Id ?? null;
+            authenticationContextUpdates.EntityId = result.data.EntityToken?.Entity?.Id ?? null;
+            InternalSettings.authenticationContext.EntityType = result.data.EntityToken?.Entity?.Type ?? null;
+            authenticationContextUpdates.EntityType = result.data.EntityToken?.Entity?.Type ?? null;
+            InternalSettings.authenticationContext.EntityToken = result.data.EntityToken?.EntityToken ?? null;
+            authenticationContextUpdates.EntityToken = result.data.EntityToken?.EntityToken ?? null;
+        }
+        // Update the authenticationContext with values from the result
+        authenticationContext = Object.assign(authenticationContext, authenticationContextUpdates);
+        return authenticationContext;
+    },
+
+    AuthInfoMap: {
+        "X-EntityToken": {
+            authAttr: "entityToken",
+            authError: "errorEntityToken"
+        },
+        "X-Authorization": {
+            authAttr: "sessionTicket",
+            authError: "errorLoggedIn"
+        },
+        "X-SecretKey": {
+            authAttr: "developerSecretKey",
+            authError: "errorSecretKey"
+        }
+    } as Record<string, Record<string, string>>,
+
+    GetAuthInfo: function (request: PlayFabModule.IPlayFabRequestCommon, authKey: string) {
+        // Use the most-recently saved authKey, unless one was provided in the request via the AuthenticationContext
+        let authError = InternalSettings.AuthInfoMap[authKey].authError;
+        let authAttr = InternalSettings.AuthInfoMap[authKey].authAttr;
+        let defaultAuthValue: any = null;
+        if (authAttr === "entityToken")
+            defaultAuthValue = InternalSettings.entityToken;
+        else if (authAttr === "sessionTicket")
+            defaultAuthValue = InternalSettings.sessionTicket;
+        else if (authAttr === "developerSecretKey")
+            defaultAuthValue = Settings.developerSecretKey;
+        let authValue = (request as any).AuthenticationContext ? (request as any).AuthenticationContext[authAttr] : defaultAuthValue;
+        return { "authKey": authKey, "authValue": authValue, "authError": authError };
+    },
+
+    ExecuteRequestWrapper: function<T extends PlayFabModule.IPlayFabResultCommon> (apiURL: string, request: PlayFabModule.IPlayFabRequestCommon, authKey: string | null, callback?: PlayFabModule.ApiCallback<T> | null, customData?: any, extraHeaders?: {[key: string]: string}): Promise<PlayFabModule.SuccessContainer<T>> {
+        let authValue: string | null = null;
+        if (authKey !== null) {
+            let authInfo = InternalSettings.GetAuthInfo(request, authKey);
+            authKey = authInfo.authKey;
+            authValue = authInfo.authValue;
+            let authError = authInfo.authError;
+
+            if (!authValue) throw authError;
+        }
+        return InternalSettings.ExecuteRequest(InternalSettings.GetServerUrl() + apiURL, request, authKey, authValue, callback, customData, extraHeaders);
+    }
+}
+
+export type IInternalSettings = typeof InternalSettings;
+
+export const BuildIdentifier = "<%- buildIdentifier %>";
+export const SdkVersion = "<%- sdkVersion %>";
+export const GenerateErrorReport = function (error: PlayFabModule.IPlayFabError): string {
+    if (error == null)
+        return "";
+    let fullErrors = error.errorMessage;
+    for (let paramName in error.errorDetails)
+        for (let msgIdx in error.errorDetails[paramName])
+            fullErrors += "\n" + paramName + ": " + error.errorDetails[paramName][msgIdx];
+    return fullErrors;
+};
